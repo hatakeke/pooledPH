@@ -3,8 +3,8 @@ rm(list=ls())
 #eliminates from memory
 gc()
 
-dataDir = "YOUR_DATA_DIRECTORY"
-setwd(dataDir)
+dataDir = "./R/pooledPH/data"
+# setwd(dataDir)
 
 library(tidyverse)    # data manipulation
 library(readxl)       # read excel
@@ -184,6 +184,9 @@ model_fullExperimentalParameters_dem =
       cores = 4, chains = 4, 
       control = list(max_treedepth = 13), init = 0)
 
+# keep a short alias `model` because later plotting code expects `model`
+model <- model_fullExperimentalParameters_dem
+
 # For the forest plot:
 library(tidyverse)
 library(tidybayes)
@@ -228,6 +231,7 @@ ggsave(figureName, units="mm", width = 90, height = 130) # cut axis
 
 library(dplyr)
 library(ggplot2)
+library(ggmcmc)
 
 # Your extracted ranef_df
 ranef_df <- as.data.frame(ranef(model)$Experiment_ID[, , "Intercept"]) %>%
@@ -274,8 +278,6 @@ ggplot(ranef_df, aes(x = Estimate, y = Precision)) +
 # Get random effects for Experiment_ID
 library(dplyr)
 library(ggplot2)
-
-model = model_fullExperimentalParameters_dem
 
 # Base data
 slope_df <- as.data.frame(ranef(model)$Experiment_ID[, , "ConditionAsync"]) %>%
@@ -475,6 +477,13 @@ model_fullExperimentalParameters_dem_PDI =
 
 # Assess convergency (catterpillar plots) ---------------------------------
 modelADPT_full = ggs(model_fullExperimentalParameters_dem)
+
+# Ensure 'betas' exists (some code expects betas to be defined later in the script).
+# If it's missing, derive a sensible default from the ggs() output.
+if(!exists("betas")){
+  betas <- unique(modelADPT_full$Parameter)
+}
+
 ggplot(filter(modelADPT_full, Parameter %in% 
                 betas[c(4,5,6)]),
        aes(x   = Iteration,
@@ -499,7 +508,7 @@ ggplot(data = data_orig, aes(x = Question_ID_7)) +
   labs(x = "PH rating - (nal data)", y = "Counts") + 
   theme_minimal()
 
-pp_check(model_fullExperimentalParameters)
+pp_check(model_fullExperimentalParameters_dem)
 
 # Real PH rating histogram
 histo = ggplot(data_orig, aes(x = Question_ID_7)) +
@@ -580,9 +589,22 @@ tibble(x = seq(from = -3.5, to = 3.5, by = .01)) %>%
   geom_ribbon(fill = "black") +
   geom_vline(xintercept = fixef(model_fullExperimentalParameters_dem)[1:6, 1], 
                                 color = colors_paper[1], linetype = 2, size = 0.75) +
-  scale_x_continuous("Posterior modes for the rating scale intercepts", 
-                     breaks = fixef(model_fullExperimentalParameters_dem)[1:6, 1],
-                     labels = parse(text = str_c("theta[", 1:6, "]"))) +
+  # make breaks/labels robust to models with fewer than 6 thresholds
+  {
+    tmp_breaks <- tryCatch(as.numeric(fixef(model_fullExperimentalParameters_dem)[,1]), error = function(e) NULL)
+    if (is.null(tmp_breaks)) tmp_breaks <- numeric(0)
+    n_breaks <- min(length(tmp_breaks), 6)
+    if (n_breaks > 0) {
+      tmp_breaks2 <- tmp_breaks[1:n_breaks]
+      tmp_labels2 <- parse(text = str_c("theta[", seq_len(n_breaks), "]"))
+    } else {
+      tmp_breaks2 <- NULL
+      tmp_labels2 <- NULL
+    }
+    scale_x_continuous("Posterior modes for the rating scale intercepts",
+                       breaks = tmp_breaks2,
+                       labels = tmp_labels2)
+  } +
   scale_y_continuous(NULL, breaks = NULL, expand = expansion(mult = c(0, 0.05))) +
   # ggtitle("Standard normal distribution underlying the ordinal Y data:",
   #         subtitle = "The dashed vertical lines mark the posterior means for the thresholds.") +
