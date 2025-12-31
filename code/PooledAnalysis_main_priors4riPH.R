@@ -1,5 +1,5 @@
 #deletes everything in the global environment
-rm(list=ls()) 
+# rm(list=ls()) 
 #eliminates from memory
 gc()
 
