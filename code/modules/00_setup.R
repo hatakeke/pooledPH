@@ -6,6 +6,10 @@
 #  出力: data_orig (前処理済みデータフレーム)
 # ==============================================================================
 
+# 比較対象のデータ数を揃える（NAの公平性の担保）
+use_complete_pairs_for_comparison <- FALSE
+# use_complete_pairs_for_comparison <- TRUE
+
 # メモリクリア
 gc()
 
@@ -13,7 +17,9 @@ gc()
 dataDir <- "./R/pooledPH/data"
 
 # 出力フォルダ設定
-output_dir <- "outputs"
+if (!exists("output_dir")) {
+    output_dir <- "outputs"
+}
 if (!dir.exists(output_dir)) {
     dir.create(output_dir, recursive = TRUE)
     cat("Created output directory:", output_dir, "\n")
@@ -156,7 +162,7 @@ load_and_preprocess_data <- function(filename) {
     data_orig$Force_field <- factor(data_orig$Force_field, labels = c("No", "Yes"))
     data_orig$Condition <- factor(data_orig$Condition, labels = c("Sync", "Async"))
     data_orig$Synchrony <- factor(data_orig$Synchrony, labels = c("Async", "Sync"))
-    data_orig$Duration_sec <- scale(data_orig$Duration_sec)
+    data_orig$Duration_sec <- as.numeric(scale(data_orig$Duration_sec))
     
     # 質問項目をordinal factorに変換
     for (i in 1:18) {
@@ -187,14 +193,90 @@ temp_async <- data_list$temp_async
 temp_sync <- data_list$temp_sync
 noSubjects <- data_list$noSubjects
 
-# デフォルトの質問インデックス（PH = 7）
+# 質問インデックス定義
+# 1: Control (no body) | 7: PH (standing behind) 
 # 1: no body (322) | 2: self-touch (554) | 5: more than one body (437) 
 # 6: PE (580) | 7: PH (580) | 16: agency (189)
+
+# 複数質問インデックスリスト（主分析用：PH & Control）
+analysis_questions <- c(1, 7)  # Control(1), PH(7)
+question_labels <- c("Control", "PH")
+
+# デフォルトの単一質問インデックス（後方互換性）
 iquest <- 7
 
+# ==============================================================================
+#  NA処理設定
+# ==============================================================================
+# 比較分析時のNAの扱い：
+#  TRUE  : 比較対象の両質問で非NAのデータのみを使用（厳密な比較）
+#  FALSE : 各質問で利用可能なすべてのデータを使用（現在のデフォルト）
+
 sl <- RColorBrewer::brewer.pal(9, 'Set1')
-print(paste0(":::::::::: Starting analysis for question ", iquest, ": ", questionsDescription[iquest], " ::::::::::"))
 
 cat("\n====== Setup completed successfully ======\n")
 cat("Data loaded:", nrow(data_orig), "rows,", ncol(data_orig), "columns\n")
-cat("Selected question:", iquest, "-", questionsDescription[iquest], "\n")
+cat("Analysis questions:", paste(paste0(analysis_questions, " (", question_labels, ")"), collapse=", "), "\n")
+
+# ==============================================================================
+#  データ品質チェック（小数データの確認）
+# ==============================================================================
+
+cat("\n====== DATA QUALITY CHECK ======\n")
+
+# 質問項目の列インデックス
+question_cols <- questionToColumn[analysis_questions]
+
+for (q_idx in seq_along(analysis_questions)) {
+    current_q <- analysis_questions[q_idx]
+    current_label <- question_labels[q_idx]
+    col_idx <- question_cols[q_idx]
+    col_name <- colnames(data_orig)[col_idx]
+    
+    # その列のデータを取得
+    question_data <- data_orig[[col_name]]
+    
+    # NULLまたは空でない場合のみ処理
+    if (!is.null(question_data) && length(question_data) > 0) {
+        # 数値に変換（警告は抑制）
+        numeric_data <- suppressWarnings(as.numeric(question_data))
+        
+        # NA以外のデータを抽出
+        valid_data <- numeric_data[!is.na(numeric_data)]
+        
+        if (length(valid_data) > 0) {
+            # 小数かどうかの判定
+            has_decimals <- any(valid_data != round(valid_data), na.rm = TRUE)
+            
+            # 整数のみの場合と小数混在の場合で表示を分ける
+            if (has_decimals) {
+                decimal_values <- valid_data[valid_data != round(valid_data)]
+                cat("\nQuestion", current_q, "-", current_label, ":\n")
+                cat("  ✓ Column:", col_name, "\n")
+                cat("  ⚠ Contains DECIMAL values (not just integers 0-6):\n")
+                cat("    Unique decimal values:", 
+                    paste(sort(unique(decimal_values)), collapse=", "), "\n")
+                cat("    Total decimal entries:", sum(valid_data != round(valid_data)), "\n")
+                cat("    Example:", head(decimal_values, 5), "\n")
+                cat("  → These decimal values ARE INCLUDED in the current analysis\n")
+            } else {
+                cat("\nQuestion", current_q, "-", current_label, ":\n")
+                cat("  ✓ Column:", col_name, "\n")
+                cat("  ✓ Contains only INTEGER values (0-6)\n")
+            }
+            
+            # NA情報
+            n_na <- sum(is.na(numeric_data))
+            cat("  Missing (NA):", n_na, "out of", length(question_data), 
+                "rows (", round(100*n_na/length(question_data), 1), "%)\n")
+        }
+    }
+}
+
+cat("\n" , rep("-", 80), "\n", sep="")
+cat("NA HANDLING MODE: ", 
+    ifelse(use_complete_pairs_for_comparison, 
+           "STRICT (both Q1 & Q7 must have valid data)",
+           "LENIENT (each question uses available data)"),
+    "\n", sep="")
+cat(rep("-", 80), "\n", sep="")
