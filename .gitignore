@@ -1,3 +1,5 @@
 # R output / posterior samples
-code/**/*.rds
-code/**/*.csv
+**/*.rds
+**/*.csv
+**/*.xlsx
+**/*.ipynb
