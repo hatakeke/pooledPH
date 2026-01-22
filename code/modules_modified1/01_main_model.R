@@ -24,9 +24,8 @@ use_model_cache <- TRUE
 #' @return brmsモデルオブジェクト
 build_main_model <- function(data_orig, iquest, questionToColumn) {
     
-    # 年齢欠損を除外（約4名）
-    selectedData <- filter(data_orig, !is.na(Age))
-    selectedData$Age <- (selectedData$Age - mean(selectedData$Age)) / sd(selectedData$Age)
+    # 年齢欠損の除外と標準化は 00_setup.R で実施済み
+    selectedData <- data_orig
     
     # フルモデルの公式
     formula_full_dem <- as.formula(paste(
@@ -75,8 +74,8 @@ build_main_model <- function(data_orig, iquest, questionToColumn) {
 #' @description Cognitive_Load を除外したモデル
 build_soa_model <- function(data_orig, iquest, questionToColumn) {
     
-    selectedData <- filter(data_orig, !is.na(Age))
-    selectedData$Age <- (selectedData$Age - mean(selectedData$Age)) / sd(selectedData$Age)
+    # 年齢欠損の除外と標準化は 00_setup.R で実施済み
+    selectedData <- data_orig
     
     formula_soa <- as.formula(paste(
         colnames(data_orig)[questionToColumn[iquest]],
@@ -113,6 +112,14 @@ build_soa_model <- function(data_orig, iquest, questionToColumn) {
 # ==============================================================================
 #  モデル実行
 # ==============================================================================
+
+cat("\n====== Checking Reference Levels ======\n")
+cat("Condition baseline:", levels(data_orig$Condition)[1], "\n")
+cat("Device baseline:", levels(data_orig$Device)[1], "\n")
+cat("Gender baseline:", levels(data_orig$Gender_IsMale)[1], "\n")
+cat("Previous Exposure baseline:", levels(data_orig$Previous_Exposure)[1], "\n")
+cat("Cognitive Load baseline:", levels(data_orig$Cognitive_Load)[1], "\n")
+cat("=======================================\n")
 
 cat("\n====== Building models for multiple questions ======\n")
 
@@ -162,9 +169,8 @@ for (idx in seq_along(analysis_questions)) {
         cat("Found cached model. Loading:", model_cache_path, "\n")
         model_fullExperimentalParameters_dem <- readRDS(model_cache_path)
         
-        # selectedData も再作成
-        selectedData <- filter(data_for_analysis, !is.na(Age))
-        selectedData$Age <- (selectedData$Age - mean(selectedData$Age)) / sd(selectedData$Age)
+        # selectedData も再作成（00_setup.R で処理済みのためそのまま割り当て）
+        selectedData <- data_for_analysis
     } else {
         # メインモデル実行（時間がかかります）
         result <- build_main_model(data_for_analysis, current_iquest, questionToColumn)

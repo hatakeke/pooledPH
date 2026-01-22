@@ -20,92 +20,59 @@ if (!exists("current_question_label")) {
 question_output_dir <- file.path(output_dir, paste0("Q", current_iquest, "_", current_question_label))
 
 # ==============================================================================
-#  プロット設定
+#  表示用ラベルとファイル名のマッピング定義
 # ==============================================================================
 
-# 図のファイル名定義
-figure_names <- c(
-    "Effect_Async.png",
-    "Effect_DeviceforMRI.png",
-    "Effect_DeviceforHand.png",
-    "Effect_DeviceWearable.png",
-    "Effect_PreviousExposure.png",
-    "Effect_CognitiveLoad.png",
-    "Effect_Duration.png",
-    "Effect_Age.png",
-    "Effect_Async_DeviceforMRI.png",
-    "Effect_Async_DeviceforHand.png",
-    "Effect_Async_DeviceWearable.png",
-    "Effect_Async_PreviousExposure.png",
-    "Effect_Async_CognitiveLoad.png",
-    "Effect_Async_Duration.png",
-    "Effect_Async_Age.png",
-    "Effect_SexAtBirth.png",
-    "Effect_ForceField.png",
-    "Effect_Async_ForceField.png",
-    "Effect_Order.png",
-    "Effect_Async_Order.png",
-    "Effect_EHI.png",
-    "Effect_Async_EHI.png",
-    "Effect_PDI.png",
-    "Effect_Async_PDI.png"
+# パラメータ成分ごとの表示用ラベル
+term_labels <- c(
+    "ConditionSync" = "Synchrony\n(Sync vs Async)",
+    "ConditionAsync" = "Asynchrony\n(Async vs Sync)",
+    "DeviceforMRI" = "Device: for MRI\n(vs Default)",
+    "DeviceforHand" = "Device: for Hand\n(vs Default)",
+    "DeviceWearable" = "Device: Wearable\n(vs Default)",
+    "Previous_ExposureRobotmanipulation" = "Prev. Exp.: Robot\n(vs None)",
+    "Cognitive_LoadYes" = "Cog. Load\n(Yes vs No)",
+    "Duration_sec" = "Duration\n(std.)",
+    "Age" = "Age\n(std.)",
+    "Gender_IsMaleMale" = "Gender: Male\n(vs Female)",
+    "Force_fieldYes" = "Force Field\n(Yes vs No)",
+    "Order2" = "Order\n(2nd vs 1st)",
+    "EHI" = "EHI (L->R)",
+    "PDI" = "PDI"
 )
 
-# ベータ係数名
-betas <- c(
-    "b_ConditionAsync", 
-    "b_DeviceforMRI",
-    "b_DeviceforHand", 
-    "b_DeviceWearable", 
-    "b_Previous_ExposureRobotmanipulation", 
-    "b_Cognitive_LoadYes", 
-    "b_Duration_sec", 
-    "b_Age",
-    "b_ConditionAsync:DeviceforMRI",
-    "b_ConditionAsync:DeviceforHand",
-    "b_ConditionAsync:DeviceWearable",
-    "b_ConditionAsync:Previous_ExposureRobotmanipulation", 
-    "b_ConditionAsync:Cognitive_LoadYes",
-    "b_ConditionAsync:Duration_sec",
-    "b_ConditionAsync:Age",
-    "b_Gender_IsMaleMale",
-    "b_Force_fieldYes",
-    "b_ConditionAsync:Force_fieldYes",
-    "b_Order2",
-    "b_ConditionAsync:Order2",
-    "b_EHI",
-    "b_ConditionAsync:EHI",
-    "b_PDI",
-    "b_ConditionAsync:PDI"
-)
+#' パラメータ名から表示用ラベルを取得する
+get_pretty_label <- function(beta_name) {
+    # 'b_' 接頭辞を削除
+    clean_name <- gsub("^b_", "", beta_name)
+    
+    # Intercept[n] の処理（nが含まれる場合のみ）
+    if (grepl("Intercept\\[\\d+\\]", clean_name)) {
+        num <- gsub("Intercept\\[(\\d+)\\]", "\\1", clean_name)
+        return(paste0("Threshold ", num, "\n(", (as.numeric(num)-1), " vs ", num, ")"))
+    } else if (clean_name == "Intercept") {
+        return("Global Intercept")
+    }
+    
+    # 交互作用（:）で分割して、それぞれの成分を変換
+    parts <- unlist(strsplit(clean_name, ":"))
+    pretty_parts <- sapply(parts, function(p) {
+        if (p %in% names(term_labels)) term_labels[p] else p
+    })
+    
+    # 結合（交互作用の場合は ":" で繋ぐ）
+    return(paste(pretty_parts, collapse = " :\n"))
+}
 
-# X軸タイトル
-xtitles <- c(
-    "Asynchrony\n(async)", 
-    "Device for MRI\n(vs. default)",
-    "Device for Hand\n(vs. default)",
-    "Wearable Device\n(vs. default)",
-    "Previous Exposure\n(+)",
-    "Cognitive Load\n(+)", 
-    "Duration\n(increasing)",
-    "Age\n(increasing in age)",
-    "Asynchrony : Device for MRI\n(Async, vs. default)",
-    "Asynchrony : Device for Hand\n(Async, vs. default)",
-    "Asynchrony : Wearable Device\n(Async, vs. default)",
-    "Asynchrony : Prev. Exp.\n(Async, +)", 
-    "Asynchrony : Cog. Load\n(Async, +)",
-    "Asynchrony : Duration\n(Async, Increasing)",
-    "Asynchrony : Age\n(Async, Increasing)",
-    "Sex at birth\n(Male)",
-    "Force field\n(Yes)",
-    "Asynchrony : Force field\n(Async, Yes)",
-    "Order\n(2nd)",
-    "Asynchrony : Order\n(Async, 2nd)",
-    "EHI\n(L -> R handed)",
-    "Asynchrony : EHI\n(Async, L -> R)",
-    "PDI\n(increasing)",
-    "Asynchrony : PDI\n(Async, increasing)"
-)
+#' パラメータ名から安全なファイル名を生成する
+get_safe_filename <- function(beta_name) {
+    # 'b_' を削除し、特殊文字を置換
+    name <- gsub("^b_", "Effect_", beta_name)
+    name <- gsub("\\[", "_", name)
+    name <- gsub("\\]", "", name)
+    name <- gsub(":", "_x_", name)
+    return(paste0(name, ".png"))
+}
 
 # ==============================================================================
 #  係数プロット関数
@@ -219,42 +186,46 @@ create_interaction_plot <- function(
 
 #' 主効果のバッチプロット生成
 #' @param model brmsモデルオブジェクト
-#' @param indices プロットする効果のインデックス
 #' @param save_files ファイル保存するか
+#' @param output_dir 保存先ディレクトリ
 generate_main_effect_plots <- function(
     model, 
-    indices = c(2:7),
     save_files = FALSE,
     output_dir = NULL
     ) {
     
-    # as_draws_df を使用してチェーンを平坦化した事後分布を取得
-    post <- as_draws_df(model) %>%
-        mutate(iter = 1:n())
+    # 修正：モデル内の全ベータ係数（b_）を自動取得
+    model_params <- variables(model)
+    betas_in_model <- model_params[grep("^b_", model_params)]
+    
+    # as_draws_df を使用して事後分布を取得
+    post <- as_draws_df(model)
     
     plots <- list()
     
-    for (i in indices) {
-        # パラメータが存在するか最終チェック
-        if (!betas[i] %in% colnames(post)) {
-            cat("Skip plotting", betas[i], "(not found in posterior draws)\n")
-            next
-        }
+    for (beta_name in betas_in_model) {
+        # 表示用ラベルとファイル名の生成
+        x_title <- get_pretty_label(beta_name)
+        file_name <- get_safe_filename(beta_name)
 
         p <- create_coefficient_plot(
             post, 
-            betas[i], 
-            xtitles[i],
+            beta_name, 
+            x_title,
             colors = colors_paper,
             fontsize = fontsize_paper
         )
         
-        plots[[i]] <- p
+        if (is.null(p)) next
+        
+        plots[[beta_name]] <- p
         
         if (save_files && !is.null(output_dir)) {
-            out_file <- file.path(output_dir, figure_names[i])
-            # 図のサイズ調整（ラベル長さに応じて）
-            w <- if (i == 1) 61 else 31
+            out_file <- file.path(output_dir, file_name)
+            
+            # 条件付きのサイズ調整（交互作用などラベルが長い場合）
+            is_interaction <- grepl(":", beta_name)
+            w <- if (is_interaction) 45 else 35
             h <- 40
             
             ggsave(out_file, plot = p, units = "mm", width = w, height = h, dpi = 300)
@@ -409,25 +380,16 @@ create_intercept_plots <- function(
 if (exists("current_model")) {
     cat("\n====== Creating Coefficient Plots for Q", current_iquest, " (", current_question_label, ") ======\n", sep="")
     
-    # モデルに含まれるパラメータを確認してプロット対象を決定
-    model_params <- variables(current_model)
-    
-    # betasリストにあるもののうち、実際にモデルに存在するインデックスを取得
-    plot_indices <- which(betas %in% model_params)
-    
-    if (length(plot_indices) == 0) {
-        cat("Warning: No matching parameters found for plotting.\n")
-    } else {
-        cat("Plotting parameters:", paste(betas[plot_indices], collapse=", "), "\n")
-    }
-
     # 主効果プロット（save_files = TRUEでoutputsフォルダに保存）
+    # モデル内の全母数を自動検出してプロット
     main_plots <- generate_main_effect_plots(
         current_model, 
-        indices = plot_indices,
         save_files = TRUE,
         output_dir = question_output_dir
     )
+    
+    # モデルに含まれる全てのパラメータ名を取得
+    model_params <- variables(current_model)
     
     # インターセプトプロット
     intercept_plots <- create_intercept_plots(
