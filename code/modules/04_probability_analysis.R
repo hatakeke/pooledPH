@@ -43,8 +43,9 @@ if (!dir.exists(probability_output_dir)) {
 #' @param model brmsモデルオブジェクト（cumulative probit族）
 #' @param data 元データ
 #' @param model_name モデル名（例：PH, Control）
+#' @param response_col 応答変数の列名
 #' @return 確率をまとめたデータフレーム
-calculate_score_probability <- function(model, data, model_name) {
+calculate_score_probability <- function(model, data, model_name, response_col) {
     
     cat("\n--- Calculating P(Score >= 1) for", model_name, "---\n")
     cat("  Model family:", model$family$family, "\n")
@@ -55,6 +56,18 @@ calculate_score_probability <- function(model, data, model_name) {
     conditions <- unique(data$Condition)
     
     results_list <- list()
+
+    # モデル出力(1..K)を実データカテゴリへ対応づけ
+    observed_levels <- data %>%
+        pull(all_of(response_col)) %>%
+        as.character() %>%
+        as.numeric() %>%
+        unique() %>%
+        sort()
+    observed_levels <- observed_levels[!is.na(observed_levels)]
+    if (length(observed_levels) < 2) {
+        stop("Insufficient response levels in data for probability analysis.")
+    }
     
     for (cond in conditions) {
         # その条件のデータを抽出
@@ -84,11 +97,15 @@ calculate_score_probability <- function(model, data, model_name) {
             ndraws = 1000       # より多くのサンプルで精度向上
         )
         
-        # 【重要】brmsのcumulative probitモデルは順序因子レベルを1から始めるため
-        # 実データのスコア(0-6)に変換する必要があります
-        # posterior_predictの出力は "1, 2, 3, 4, 5, 6, 7" だが
-        # 実際のスコアは "0, 1, 2, 3, 4, 5, 6" なので1を引く
-        posterior_samples <- posterior_samples - 1
+        # brms出力の1..Kを、観測カテゴリ（0..6または1..6）へ対応づけ
+        if (max(posterior_samples, na.rm = TRUE) > length(observed_levels)) {
+            stop("posterior_predict returned category index outside observed levels.")
+        }
+        posterior_samples <- matrix(
+            observed_levels[posterior_samples],
+            nrow = nrow(posterior_samples),
+            ncol = ncol(posterior_samples)
+        )
         
         cat("    Posterior samples shape:", nrow(posterior_samples), "x", ncol(posterior_samples), "\n")
         
@@ -121,7 +138,7 @@ calculate_score_probability <- function(model, data, model_name) {
                 Cognitive_Load = cond_data$Cognitive_Load[i],
                 Duration_sec = cond_data$Duration_sec[i],
                 Age_Standardized = cond_data$Age[i],
-                Gender = ifelse(cond_data$Gender_IsMale[i] == 1, "Male", "Female"),
+                Gender = as.character(cond_data$Gender_IsMale[i]),
                 Experiment_ID = cond_data$Experiment_ID[i],
                 P_Score_0 = prob_score_0,
                 P_Score_1 = prob_score_1,
@@ -184,7 +201,12 @@ control_data <- data_full %>%
     filter(!is.na(Age))
 control_data$Age <- (control_data$Age - mean(data_full$Age, na.rm = TRUE)) / sd(data_full$Age, na.rm = TRUE)
 
-control_probs <- calculate_score_probability(control_model, control_data, "Control (Q1)")
+control_probs <- calculate_score_probability(
+    control_model,
+    control_data,
+    "Control (Q1)",
+    response_col = colnames(data_full)[questionToColumn[1]]
+)
 control_increase <- calculate_increase_probability(control_model, control_data, "Control (Q1)")
 
 # 質問固有の出力ディレクトリ
@@ -237,7 +259,12 @@ ph_data <- data_full %>%
     filter(!is.na(Age))
 ph_data$Age <- (ph_data$Age - mean(data_full$Age, na.rm = TRUE)) / sd(data_full$Age, na.rm = TRUE)
 
-ph_probs <- calculate_score_probability(ph_model, ph_data, "PH (Q7)")
+ph_probs <- calculate_score_probability(
+    ph_model,
+    ph_data,
+    "PH (Q7)",
+    response_col = colnames(data_full)[questionToColumn[7]]
+)
 ph_increase <- calculate_increase_probability(ph_model, ph_data, "PH (Q7)")
 
 # 質問固有の出力ディレクトリ

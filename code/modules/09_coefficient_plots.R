@@ -215,7 +215,8 @@ generate_main_effect_plots <- function(
     output_dir = NULL
     ) {
     
-    post <- posterior_samples(model) %>%
+    post <- as_draws_df(model) %>%
+        as_tibble() %>%
         mutate(iter = 1:n())
     
     plots <- list()
@@ -291,32 +292,52 @@ create_intercept_plots <- function(
     model, 
     colors = c("#d4bbff", "#4589ff"),
     fontsize = 7,
+    rating_labels = NULL,
     output_file = NULL
     ) {
     
-    post_predictions <- posterior_samples(model) %>%
-        select(`b_Intercept[1]`:`b_Intercept[6]`) %>%
+    intercept_cols <- as_draws_df(model) %>%
+        as_tibble() %>%
+        dplyr::select(dplyr::matches("^b_Intercept\\[[0-9]+\\]$")) %>%
+        colnames()
+
+    if (length(intercept_cols) == 0) {
+        stop("No intercept parameters found in model.")
+    }
+
+    post_predictions <- as_draws_df(model) %>%
+        as_tibble() %>%
+        select(all_of(intercept_cols)) %>%
         mutate(iter = 1:n())
+
+    n_thresholds <- length(intercept_cols)
+    n_categories <- n_thresholds + 1
+    if (is.null(rating_labels) || length(rating_labels) != n_categories) {
+        rating_labels <- as.character(0:(n_categories - 1))
+    }
     
     # 確率分布プロット
-    p1_data <- post_predictions %>% 
-        select(-iter) %>% 
-        mutate_all(.funs = ~pnorm(., 0, 1)) %>% 
-        transmute(
-            `p[Q7==0]` = `b_Intercept[1]`,
-            `p[Q7==1]` = `b_Intercept[2]` - `b_Intercept[1]`,
-            `p[Q7==2]` = `b_Intercept[3]` - `b_Intercept[2]`,
-            `p[Q7==3]` = `b_Intercept[4]` - `b_Intercept[3]`,
-            `p[Q7==4]` = `b_Intercept[5]` - `b_Intercept[4]`,
-            `p[Q7==5]` = `b_Intercept[6]` - `b_Intercept[5]`,
-            `p[Q7==6]` = 1 - `b_Intercept[6]`
-        ) %>% 
-        set_names(0:6) %>% 
-        pivot_longer(everything(), names_to = "Q7", values_to = "value")
+    cumulative_prob <- post_predictions %>%
+        select(-iter) %>%
+        mutate_all(.funs = ~ pnorm(., 0, 1)) %>%
+        as.matrix()
+
+    category_prob <- matrix(NA_real_, nrow = nrow(cumulative_prob), ncol = n_categories)
+    category_prob[, 1] <- cumulative_prob[, 1]
+    if (n_categories > 2) {
+        for (j in 2:(n_categories - 1)) {
+            category_prob[, j] <- cumulative_prob[, j] - cumulative_prob[, j - 1]
+        }
+    }
+    category_prob[, n_categories] <- 1 - cumulative_prob[, n_thresholds]
+
+    p1_data <- as_tibble(category_prob) %>%
+        set_names(rating_labels) %>%
+        pivot_longer(everything(), names_to = "Rating", values_to = "value")
     
     # 手動で統計量を計算
     p1_summary <- p1_data %>%
-        group_by(Q7) %>%
+        group_by(Rating) %>%
         summarise(
             median = median(value),
             lower_89 = quantile(value, 0.055),
@@ -326,7 +347,7 @@ create_intercept_plots <- function(
             .groups = "drop"
         )
     
-    p1 <- ggplot(p1_summary, aes(x = median, y = Q7)) +
+    p1 <- ggplot(p1_summary, aes(x = median, y = factor(Rating, levels = rev(rating_labels)))) +
         geom_linerange(aes(xmin = lower_89, xmax = upper_89), color = colors[1], linewidth = 0.8) +
         geom_linerange(aes(xmin = lower_66, xmax = upper_66), color = colors[1], linewidth = 1.5) +
         geom_point(color = colors[2], size = 1.5) +
@@ -343,20 +364,22 @@ create_intercept_plots <- function(
         )
     
     # 正規分布 + 閾値プロット
+    fixef_intercepts <- fixef(model)[grepl("^Intercept\\[", rownames(fixef(model))), 1]
+
     p2 <- tibble(x = seq(from = -3.5, to = 3.5, by = .01)) %>%
         mutate(d = dnorm(x)) %>% 
         ggplot(aes(x = x, ymin = 0, ymax = d)) +
         geom_ribbon(fill = "black") +
         geom_vline(
-            xintercept = fixef(model)[1:6, 1], 
+            xintercept = fixef_intercepts,
             color = colors[1], 
             linetype = 2, 
             size = 0.75
         ) +
         scale_x_continuous(
             "Posterior modes for the rating scale intercepts",
-            breaks = fixef(model)[1:6, 1],
-            labels = parse(text = str_c("theta[", 1:6, "]"))
+            breaks = fixef_intercepts,
+            labels = parse(text = str_c("theta[", seq_along(fixef_intercepts), "]"))
         ) +
         scale_y_continuous(NULL, breaks = NULL, expand = expansion(mult = c(0, 0.05))) +
         coord_cartesian(xlim = c(-3, 5)) + 
@@ -434,6 +457,7 @@ if (exists("current_model")) {
         current_model,
         colors = colors_paper,
         fontsize = fontsize_paper,
+        rating_labels = levels(selectedData_current[[colnames(selectedData_current)[questionToColumn[current_iquest]]]]),
         output_file = file.path(question_output_dir, "Intercept")
     )
     

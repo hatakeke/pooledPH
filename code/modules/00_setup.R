@@ -10,6 +10,10 @@
 use_complete_pairs_for_comparison <- FALSE
 # use_complete_pairs_for_comparison <- TRUE
 
+# PH(Q7)を1-6のみで解析する場合に有効化（既定は無効）
+ph_exclude_zero <- FALSE
+ph_allowed_scores <- 1:6
+
 # メモリクリア
 gc()
 
@@ -141,6 +145,14 @@ filename <- "../../data/PooledData.xlsx"
 load_and_preprocess_data <- function(filename) {
     # データ読み込み
     data_orig <- read_excel(filename, sheet = "Data")
+
+    # 生データ参照用の列を保存
+    if ("Duration_sec" %in% colnames(data_orig)) {
+        data_orig$Duration_sec_raw <- data_orig$Duration_sec
+    }
+    if ("Question_ID_7" %in% colnames(data_orig)) {
+        data_orig$Question_ID_7_raw <- suppressWarnings(as.numeric(data_orig$Question_ID_7))
+    }
     
     # Sync/Async一時データ（後で使用）
     temp_async <- filter(data_orig, Synchrony == 0)
@@ -178,6 +190,16 @@ load_and_preprocess_data <- function(filename) {
         }
     }
 
+    # PH(Q7)を1-6のみに制約（有効時のみ。対象外はNA）
+    if (ph_exclude_zero && "Question_ID_7" %in% colnames(data_orig)) {
+        ph_numeric <- suppressWarnings(as.numeric(as.character(data_orig$Question_ID_7)))
+        data_orig$Question_ID_7 <- factor(
+            ifelse(ph_numeric %in% ph_allowed_scores, as.character(ph_numeric), NA_character_),
+            levels = as.character(ph_allowed_scores),
+            ordered = TRUE
+        )
+    }
+
     return(list(
         data_orig = data_orig,
         temp_async = temp_async,
@@ -192,6 +214,68 @@ data_orig <- data_list$data_orig
 temp_async <- data_list$temp_async
 temp_sync <- data_list$temp_sync
 noSubjects <- data_list$noSubjects
+
+# 標準化ゼロ点（平均値）を確認するための補助CSV出力
+export_standardization_zero_reference <- function(data) {
+    target_vars <- c("Age", "Duration_sec_raw")
+    target_vars <- target_vars[target_vars %in% colnames(data)]
+
+    if (length(target_vars) == 0 || !("Question_ID_7_raw" %in% colnames(data))) {
+        return(invisible(NULL))
+    }
+
+    data_all_0_6 <- data %>%
+        filter(!is.na(Question_ID_7_raw), Question_ID_7_raw >= 0, Question_ID_7_raw <= 6)
+
+    data_used_1_6 <- data %>%
+        filter(!is.na(Question_ID_7_raw), Question_ID_7_raw >= 1, Question_ID_7_raw <= 6)
+
+    datasets <- list(
+        MetaUsable_PH_0to6 = data_all_0_6,
+        MetaUsed_PH_1to6 = data_used_1_6
+    )
+
+    rows <- list()
+    idx <- 1
+    for (dataset_name in names(datasets)) {
+        d <- datasets[[dataset_name]]
+        for (var_name in target_vars) {
+            values <- suppressWarnings(as.numeric(d[[var_name]]))
+            values <- values[!is.na(values)]
+            if (length(values) == 0) {
+                rows[[idx]] <- data.frame(
+                    Dataset = dataset_name,
+                    Continuous_Variable = var_name,
+                    N = 0,
+                    Mean_Raw = NA_real_,
+                    SD_Raw = NA_real_,
+                    Raw_Value_at_Standardized_0 = NA_real_,
+                    stringsAsFactors = FALSE
+                )
+            } else {
+                m <- mean(values)
+                s <- sd(values)
+                rows[[idx]] <- data.frame(
+                    Dataset = dataset_name,
+                    Continuous_Variable = var_name,
+                    N = length(values),
+                    Mean_Raw = m,
+                    SD_Raw = s,
+                    Raw_Value_at_Standardized_0 = m,
+                    stringsAsFactors = FALSE
+                )
+            }
+            idx <- idx + 1
+        }
+    }
+
+    out <- dplyr::bind_rows(rows)
+    out_file <- file.path(output_dir, "Standardization_Zero_Reference_PH.csv")
+    readr::write_csv(out, out_file)
+    cat("Standardization zero-reference saved to:", out_file, "\n")
+}
+
+export_standardization_zero_reference(data_orig)
 
 # 質問インデックス定義
 # 1: Control (no body) | 7: PH (standing behind) 
@@ -217,6 +301,10 @@ sl <- RColorBrewer::brewer.pal(9, 'Set1')
 cat("\n====== Setup completed successfully ======\n")
 cat("Data loaded:", nrow(data_orig), "rows,", ncol(data_orig), "columns\n")
 cat("Analysis questions:", paste(paste0(analysis_questions, " (", question_labels, ")"), collapse=", "), "\n")
+if (ph_exclude_zero) {
+    n_ph_zero <- sum(data_orig$Question_ID_7_raw == 0, na.rm = TRUE)
+    cat("PH non-zero mode enabled: Q7 score=0 excluded (as NA). Excluded rows:", n_ph_zero, "\n")
+}
 
 # ==============================================================================
 #  データ品質チェック（小数データの確認）
